@@ -1,119 +1,92 @@
-# CalculatriceWS – SOAP Web Service with Jakarta XML Web Services
+# Web Services SOAP : rôles du Serveur, de l'Annuaire et du Client
 
-TP2 – Architecture SOA et services web (LSI3-GLSI, 2025-2026).
+Notes de révision basées sur les chapitres du cours « Web Service SOAP », « Mise en oeuvre d'un premier SOA » et « Mise en oeuvre du client SOAP ».
 
-A Java application that exposes a SOAP web service performing four simple operations
-(sum, subtraction, multiplication, division), published with `Endpoint.publish` and
-tested with SoapUI.
+## 1. Les trois acteurs
 
-## Architecture
+| Acteur | Rôle | Ce qu'il fait |
+|---|---|---|
+| Serveur (producteur de service) | Crée et héberge le service web | Contient le code métier (`CalculWS`), publie le service avec `Endpoint.publish(...)`, génère le WSDL, répond aux requêtes SOAP |
+| Annuaire (registre UDDI) | Registre de services | Stocke les contrats WSDL publiés par les serveurs et permet aux clients de les découvrir |
+| Client (consommateur de service) | Utilise le service | Interroge l'annuaire, lit le WSDL, appelle le service via un proxy (stub) |
+
+## 2. Schéma
 
 ```
-CalculatriceWS/
-├── pom.xml
-├── README.md
-└── src/
-    └── main/
-        └── java/
-            ├── service/
-            │   ├── ICalculatrice.java
-            │   └── Calculatrice.java
-            └── serveur/
-                └── ServeurJWS.java
+                      +----------------------+
+                      |   ANNUAIRE (UDDI)    |
+                      | registre des         |
+                      | contrats WSDL        |
+                      +----------------------+
+                        ^ 1             ^ |
+                        | publication   | | 3 renvoie le
+                        | du WSDL       | | contrat WSDL
+                        |             2 | v
+                        |      interrogation de service
+                        |                 |
+   +--------------------+--+       +------+----------------+
+   |  SERVEUR (producteur) |       |   CLIENT (consommateur)|
+   |  héberge le service   | <---- |   l'appelle via un     |
+   |  web                  |  4    |   proxy (stub)         |
+   |                       | ----> |                        |
+   +-----------------------+  5    +------------------------+
+
+   4 = Requête SOAP  (HTTP POST, enveloppe XML)
+   5 = Réponse SOAP (HTTP, enveloppe XML contenant le résultat)
 ```
 
-| File | Role |
-|------|------|
-| `pom.xml` | Maven configuration (Java 1.8, JAX-WS dependencies) |
-| `service/ICalculatrice.java` | Service interface annotated with `@WebService`, `@WebMethod`, `@WebParam`, `@WebResult` |
-| `service/Calculatrice.java` | Business implementation of the interface |
-| `serveur/ServeurJWS.java` | Publishes the service with `Endpoint.publish` |
+## 3. Les cinq étapes
 
-## Maven dependencies
+1. Publication : le serveur publie son WSDL (le contrat) dans l'annuaire.
+2. Interrogation de service : le client cherche un service dans l'annuaire.
+3. L'annuaire renvoie les informations et le contrat WSDL au client.
+4. Le client envoie une requête SOAP au serveur (HTTP POST, le corps contient le nom de la méthode et les paramètres en XML).
+5. Le serveur renvoie une réponse SOAP (HTTP, le corps contient le résultat en XML).
 
-| Dependency | Purpose |
-|------------|---------|
-| `jakarta.xml.ws:jakarta.xml.ws-api:2.3.3` | JAX-WS API (`Endpoint`, ...) |
-| `jakarta.jws:jakarta.jws-api:2.1.0` | Annotations (`@WebService`, `@WebMethod`, `@WebParam`) |
-| `com.sun.xml.ws:jaxws-rt:2.3.3` | Runtime that executes the service |
+L'annuaire est optionnel. Si le client connaît déjà l'adresse du service, il peut sauter les étapes 2 et 3, récupérer le WSDL directement sur le serveur (`http://localhost:8686/?wsdl`) et passer aux étapes 4 et 5.
 
-These versions belong to the `javax.*` package family, so the imports are
-`javax.jws.*` and `javax.xml.ws.*`.
+Chronologie vue du côté client (bas du tableau) : recherche (clé UDDI), découverte, lecture du WSDL, appel, réponse.
 
-## Service design
+## 4. Le rôle de chaque acteur en détail
 
-- **Interface and class annotated with `@WebService`**: the interface defines the contract,
-  the class links to it with `endpointInterface`.
-- **`@WebMethod`** gives each operation an explicit name in the WSDL
-  (`somme`, `soustraction`, `multiplication`, `division`).
-- **`@WebParam`** names the parameters `a` and `b`, so the XSD and SoapUI requests are readable.
-- **`@WebResult`** names the returned value `resultat`.
-- **Division by zero** throws an `IllegalArgumentException`, returned to the client as a SOAP fault.
+### Serveur
+- Interface Java annotée avec `@WebService`, `@WebMethod`, `@WebParam` (le contrat).
+- Classe d'implémentation avec `@WebService(endpointInterface = "Service.ICalculWS")` (le code métier).
+- Publication :
+  ```java
+  Endpoint.publish("http://localhost:8686/", new CalculWS());
+  ```
+- Jakarta XML Web Services génère automatiquement le WSDL.
+- Côté serveur, le skeleton décode la requête SOAP, appelle la vraie méthode et sérialise le résultat dans une réponse SOAP.
 
-## Prerequisites
+### Annuaire (UDDI)
+- Annuaire distribué normalisé de Web Services (il se comporte lui-même comme un web service appelé via SOAP).
+- Pages blanches : les entreprises et leurs coordonnées.
+- Pages jaunes : les Web Services de chaque entreprise (WSDL).
+- Pages vertes : les informations techniques précises sur les services.
 
-- JDK 8 or newer
-- IntelliJ IDEA
-- SoapUI (open-source edition)
-- Internet access on the first build (Maven downloads the dependencies)
-- Port `8080` free (otherwise change `URL` in `ServeurJWS.java`)
+### Client
+- Génère le proxy à partir du WSDL avec `wsimport` (rôle similaire à `idlj` en CORBA) :
+  ```
+  mvn clean jaxws:wsimport
+  ```
+- Appelle le service comme s'il s'agissait d'un objet local :
+  ```java
+  CalculWSService service = new CalculWSService();
+  ICalculWS port = service.getCalculWSPort();
+  int resultat = port.somme(34, 39);
+  ```
+- Le proxy construit la requête SOAP, l'envoie via HTTP, puis désérialise la réponse en objet Java.
 
-## Running the service in IntelliJ IDEA
+## 5. Concepts clés
 
-1. Open IntelliJ IDEA and choose **File > Open**, then select the `CalculatriceWS` folder
-   (the one containing `pom.xml`). Confirm **Open as Project**.
-2. Wait for Maven to import the project, or use **Maven > Reload project**. Check that the
-   Project SDK is set under **File > Project Structure > Project**.
-3. Open `src/main/java/serveur/ServeurJWS.java`.
-4. Click the green arrow next to `public static void main` and choose **Run 'ServeurJWS.main()'**.
-5. The console prints the service URL. The program keeps running: this is the server.
-   Stop it with the red square button when you are done.
+- SOAP : protocole basé sur XML pour structurer les messages échangés entre client et serveur, transportés via HTTP.
+  Structure d'un message : en-têtes HTTP > enveloppe SOAP > en-tête SOAP + corps SOAP (appel de méthode et données).
+- WSDL : fichier XML qui décrit le service. C'est le contrat entre le client et le serveur.
+  Éléments : `definitions`, `types`, `message`, `portType` (partie abstraite), `binding`, `service` (partie concrète).
+- UDDI : annuaire permettant de publier et de découvrir des Web Services.
+- Proxy (stub) côté client et skeleton côté serveur : ils jouent le rôle de traducteurs entre les appels Java et les messages SOAP.
 
-## Service endpoints
+## 6. Tester le service
 
-| Resource | URL |
-|----------|-----|
-| Service | `http://localhost:8080/calculatrice` |
-| WSDL | `http://localhost:8080/calculatrice?wsdl` |
-| Generated XSD | `http://localhost:8080/calculatrice?xsd=1` |
-
-Open the WSDL and the XSD in a browser to see how the Java class maps to the contract
-(messages, types, port type, binding).
-
-## Testing with SoapUI
-
-1. Launch SoapUI and choose **File > New SOAP Project**.
-2. Paste `http://localhost:8080/calculatrice?wsdl` as the **Initial WSDL** and click **OK**.
-3. Expand an operation (for example `somme`) and double-click **Request 1**.
-4. Replace the `?` placeholders with values:
-
-```xml
-<a>5</a>
-<b>3</b>
-```
-
-5. Click the green arrow to send the request. The response contains:
-
-```xml
-<resultat>8.0</resultat>
-```
-
-Expected results with `a = 5` and `b = 3`:
-
-| Operation | Result |
-|-----------|--------|
-| `somme` | 8.0 |
-| `soustraction` | 2.0 |
-| `multiplication` | 15.0 |
-| `division` | 1.6666666666666667 |
-
-With `b = 0`, `division` returns a SOAP fault containing the message
-`Division par zero impossible`.
-
-## Troubleshooting
-
-- **`Address already in use`**: another application uses port 8080. Change the port in
-  `ServeurJWS.java` and use the new URL in SoapUI.
-- **Dependencies not found**: run **Maven > Reload project** and check your internet connection.
-- **WSDL not reachable**: make sure `ServeurJWS` is still running before importing the WSDL in SoapUI.
-- **Firewall prompt on Windows**: click **Allow access**.
+Utiliser SoapUI : créer un projet SOAP, fournir l'URL du WSDL (`http://localhost:8686/?wsdl`), choisir une méthode, saisir les paramètres, envoyer la requête et lire la réponse XML.
